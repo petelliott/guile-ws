@@ -2,6 +2,9 @@
   #:use-module (web server)
   #:use-module (web request)
   #:use-module (web response)
+  #:use-module (gcrypt hash)
+  #:use-module (gcrypt base64)
+  #:use-module (ice-9 iconv)
   #:export (hijack-port
             close-response
             hijack-request
@@ -45,12 +48,21 @@
                    #:headers '((content-type . (text/plain))))
    "Invalid client websocket handshake"))
 
+(define (key->accept key)
+  (base64-encode
+   (sha1 (string->bytevector
+          (string-append key "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          "UTF-8"))))
+
 (define* (ws-build-response request #:optional (headers '()))
   "build a server's websocket handshake response"
+  (define ws-key (assoc-ref (request-headers request)
+                            'sec-websocket-key))
   (build-response #:code 101
                   #:headers `((upgrade . ("websocket"))
                               (connection . (upgrade))
-                              (sec-websocket-accept . "TODO")
+                              (sec-websocket-accept
+                               . ,(key->accept ws-key))
                               ,@headers)))
 
 (define (ws-upgrade request fun)
