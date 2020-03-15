@@ -37,7 +37,7 @@
   (define headers (request-headers request))
   (and
    (equal? (assoc-ref headers 'upgrade) '("websocket"))
-   (equal? (assoc-ref headers 'connection) '(upgrade))
+   (member 'upgrade (assoc-ref headers 'connection))
    (assoc-ref headers 'sec-websocket-key)
    (equal? (assoc-ref headers 'sec-websocket-version) "13")))
 
@@ -71,5 +71,6 @@
       (ws-error-response)
       (let ((port (hijack-request request)))
         (write-response (ws-build-response request) port)
+        (force-output port)
         (fun port)
         (close-response))))
