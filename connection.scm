@@ -89,7 +89,7 @@
 (define (read-len-mask port)
   (define fbyte (get-u8 port))
   (define maskbit (ash fbyte -7))
-  (define len (logand fbyte #x7))
+  (define len (logand fbyte #x7f))
   (values
    (cond
     ((= len 126) (get-u16 port))
@@ -100,10 +100,19 @@
        #f)))
 
 (define (unsanitize-body opcode body)
+  (write body)
+  (newline)
   (cond
    ((= opcode ws:TEXT) (bytevector->string body "UTF-8"))
    ((= opcode ws:CLOSE)
-    '(0 . #vu8(5))) ;TODO
+    (cons
+     (logior (ash (array-ref body 0) 8)
+             (array-ref body 1))
+     ;; this takes 2 copies when it should do 0
+     (let* ((mlen (- (bytevector-length body) 2))
+            (bv (make-bytevector mlen)))
+       (bytevector-copy! body 2 bv 0 mlen)
+       (bytevector->string bv "UTF-8"))))
    (else body)))
 
 (define (read-ws-frame port)
