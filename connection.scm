@@ -1,7 +1,8 @@
 (define-module (guile-ws connection)
   #:use-module (srfi srfi-9)
+  #:use-module (srfi srfi-11)
   #:use-module ((rnrs io ports)
-                #:select (put-u8 put-bytevector))
+                #:select (put-u8 put-bytevector get-u8 get-bytevector-n))
   #:use-module (rnrs bytevectors)
   #:use-module (ice-9 iconv)
   #:export (make-ws
@@ -43,8 +44,78 @@
 (define ws:PING  #x9)
 (define ws:PONG  #x9)
 
+(define (get-u16 port)
+  (logior
+   (ash (get-u8 port) 8)
+   (get-u8 port)))
+
+(define (get-u32 port)
+  (logior
+   (ash (get-u8 port) 24)
+   (ash (get-u8 port) 16)
+   (ash (get-u8 port) 8)
+   (get-u8 port)))
+
+(define (get-u64 port)
+  (logior
+   (ash (get-u8 port) 56)
+   (ash (get-u8 port) 48)
+   (ash (get-u8 port) 40)
+   (ash (get-u8 port) 32)
+   (ash (get-u8 port) 24)
+   (ash (get-u8 port) 16)
+   (ash (get-u8 port) 8)
+   (get-u8 port)))
+
+(define (u32-swap-endianness u32)
+  (logior
+   (ash (logand u32 #xff) 24)
+   (ash (logand u32 #xff00) 8)
+   (ash (logand u32 #xff0000) -8)
+   (ash (logand u32 #xff000000) -24)))
+
+(define (mask! bv mask)
+  "applies mask to bytevector (note that this is the same as in
+   reverse)"
+  (when mask
+    (let ((rmask (u32-swap-endianness mask)))
+      (array-index-map!
+       bv
+       (lambda (i)
+         (logxor (array-ref bv i)
+                 (logand (ash rmask (* -8 (modulo i 4))) #xff))))))
+  bv)
+
+(define (read-len-mask port)
+  (define fbyte (get-u8 port))
+  (define maskbit (ash fbyte -7))
+  (define len (logand fbyte #x7))
+  (values
+   (cond
+    ((= len 126) (get-u16 port))
+    ((= len 127) (get-u64 port))
+    (else len))
+   (if (= maskbit 1)
+       (get-u32 port)
+       #f)))
+
+(define (unsanitize-body opcode body)
+  (cond
+   ((= opcode ws:TEXT) (bytevector->string body "UTF-8"))
+   ((= opcode ws:CLOSE)
+    '(0 . #vu8(5))) ;TODO
+   (else body)))
+
 (define (read-ws-frame port)
-  #f)
+  (define fbyte (get-u8 port))
+  ;;;TODO: check FIN bit
+  (if (eof-object? fbyte)
+      fbyte
+      (let*-values (((opcode) (logand fbyte #xf))
+                    ((len mask) (read-len-mask port))
+                    ((body) (get-bytevector-n port len)))
+        (make-ws-frame opcode mask
+                       (unsanitize-body opcode (mask! body mask))))))
 
 
 (define (put-u16 port val)
