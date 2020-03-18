@@ -5,6 +5,7 @@
   #:use-module (gcrypt hash)
   #:use-module (gcrypt base64)
   #:use-module (ice-9 iconv)
+  #:use-module (guile-ws connection)
   #:export (hijack-port
             close-response
             hijack-request
@@ -72,5 +73,5 @@
       (let ((port (hijack-request request)))
         (write-response (ws-build-response request) port)
         (force-output port)
-        (fun port)
+        (fun (make-ws port 'OPEN #f))
         (close-response))))

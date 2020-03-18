@@ -8,6 +8,8 @@
   #:export (make-ws
             ws?
             ws-port
+            ws-state
+            set-ws-state!
             ws-masked?
             make-ws-frame
             ws-frame?
@@ -21,12 +23,16 @@
             ws:PING
             ws:PONG
             read-ws-frame
-            write-ws-frame))
+            write-ws-frame
+            ws-loop
+            ws-send
+            ws-close))
 
 (define-record-type <ws>
-  (make-ws port masked)
+  (make-ws port state masked)
   ws?
   (port ws-port)
+  (state ws-state set-ws-state!)
   (masked ws-masked?))
 
 ;; TODO fragmentation
@@ -100,8 +106,6 @@
        #f)))
 
 (define (unsanitize-body opcode body)
-  (write body)
-  (newline)
   (cond
    ((= opcode ws:TEXT) (bytevector->string body "UTF-8"))
    ((= opcode ws:CLOSE)
@@ -174,3 +178,42 @@
     ;;TODO send mask key
     (put-bytevector port body)
     (force-output port)))
+
+;;; The following is the recomended public api
+
+(define (ws-loop ws proc)
+  "calls proc with each incoming message from ws. returns the close
+   code and reason"
+  (define frame (read-ws-frame (ws-port ws)))
+  (cond
+   ((eof-object? frame) (values 1006 "")) ; 1006: abnormal closure, never sent
+   ((= (ws-frame-opcode frame) ws:CLOSE)
+    (when (eq? (ws-state ws) 'OPEN)
+      ;; TODO fix for masked websockets
+      (write-ws-frame (make-ws-frame ws:CLOSE #f (ws-frame-body frame))
+                      (ws-port ws)))
+    (close-port (ws-port ws))
+    (set-ws-state! ws 'CLOSED)
+    (values (car (ws-frame-body frame))
+            (cdr (ws-frame-body frame))))
+   (else
+    (proc (ws-frame-body frame))
+    (ws-loop ws proc))))
+
+(define (ws-send ws data)
+  "send data (bytevector or string) to ws"
+  (if (eq? (ws-state ws) 'OPEN)
+      (write-ws-frame (make-ws-frame
+                       (if (string? data) ws:TEXT ws:BIN)
+                       #f data)
+                      (ws-port ws))
+      (error "attempt to send to non-open websocket" ws)))
+
+(define* (ws-close ws #:optional (code 1000) (reason ""))
+  "close ws. subsequet calls will have no effect"
+  (when (eq? (ws-state ws) 'OPEN)
+    ;; TODO fix for masked websockets
+    (write-ws-frame (make-ws-frame ws:CLOSE #f
+                                   (cons code reason))
+                    (ws-port ws))
+    (set-ws-state! ws 'CLOSING)))
